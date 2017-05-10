@@ -8,7 +8,7 @@ local posix = require 'posix'
 -- node_weights is a matrix for parameter weights for different nodes
 -- node_id is the ID of this node
 -- self_parameters is a table of tensors of training parameters
-local function DecentralizedSGD(nodes, node_weights, node_id, self_parameters)
+local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters)
 
   -- thread pool
   local pool
@@ -37,6 +37,20 @@ local function DecentralizedSGD(nodes, node_weights, node_id, self_parameters)
   local sync_progress = tds.AtomicCounter()
   -- create tensors for receiving tensors from peers
   local t_recv = { } -- a table of torch.Tensor() for receiving tensors
+  -- flatten the parameter table
+  local self_parameters = { }
+  -- debug print's
+  local debug = false
+  
+  local function ExpandParameters(param, keyname)
+    if type(param) == 'table' then
+      for key, val in pairs(param) do
+        ExpandParameters(val, keyname..'_'..key)
+      end
+    elseif string.match(torch.typename(param), "Tensor") then
+      self_parameters[keyname] = param
+    end
+  end
 
   -- find IP of this node
   local function GetSelfIP()
@@ -102,7 +116,9 @@ local function DecentralizedSGD(nodes, node_weights, node_id, self_parameters)
     local sync_lock = threads.Mutex(sync_lock_id)
     local sync_cond = threads.Condition(sync_cond_id)
     thread_print = function(str)
-      print(colors('%{1}[SERVER 0]'..tostring(str)))
+      if debug then
+        print(colors('%{1}[SERVER 0]'..tostring(str)))
+      end
     end
     thread_print(string.format("mutex ID is %d", sync_lock_id))
     -- initialize connection
@@ -126,7 +142,9 @@ local function DecentralizedSGD(nodes, node_weights, node_id, self_parameters)
         -- server sends version message to client
         client:send('0.1')
       end)
-      posix.sleep(1)
+      if debug then
+        posix.sleep(1)
+      end
       thread_print(i.." incoming connections")
       if i > nr_incoming then
         break
@@ -186,7 +204,9 @@ local function DecentralizedSGD(nodes, node_weights, node_id, self_parameters)
       local sync_cond = threads.Condition(sync_cond_id)
       posix.sleep(10)
       thread_print = function(str)
-        print(colors('%{'..(tid+1)..'}[CLIENT '..tid..']'..tostring(str)))
+        if debug then
+          print(colors('%{'..(tid+1)..'}[CLIENT '..tid..']'..tostring(str)))
+        end
       end
       thread_print(string.format("Thread %d mutex ID is %d", tid, sync_lock_id))
       local client_ip = peer["host"]
@@ -218,7 +238,9 @@ local function DecentralizedSGD(nodes, node_weights, node_id, self_parameters)
         thread_print('requesting tensor!')
         client:send('getblock')
         thread_print(string.format('receiving tensor for thread %d', __threadid))
-        posix.sleep(1)
+        if debug then
+          posix.sleep(1)
+        end
         for i = 1,#ordered_keys do
           local key = ordered_keys[i]
           client:recv(t_recv[key][tid])
@@ -275,9 +297,12 @@ local function DecentralizedSGD(nodes, node_weights, node_id, self_parameters)
   end
 
   local function Init()
+    ExpandParameters(model_parameters, '')
+    print(self_parameters)
     GetSelfIP()
     GetSelfWeight()
     CreateClientServerThreads()
+    return self_rank
   end
 
   local function StartCommunication()
