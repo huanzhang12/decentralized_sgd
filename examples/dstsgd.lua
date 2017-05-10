@@ -319,5 +319,39 @@ local function DecentralizedSGD(nodes, node_weights, node_id, self_parameters)
   }
 end
 
-return DecentralizedSGD
+local function LoadConfigFromFile(nodes_file, weights_file)
+  -- read all nodes
+  io.input(nodes_file)
+  local nodes = { }
+  -- read the lines in table 'lines'
+  for line in io.lines() do
+    line = stringx.strip(line)
+    if (line ~= '') then
+      hostport = string.split(line,':')
+      table.insert(nodes, {host=hostport[1], port=hostport[2], self=false})
+    end
+  end
+  print(nodes)
+
+  -- read all weights
+  io.input(weights_file)
+  local weights = { }
+  for line in io.lines() do
+    line = stringx.strip(line)
+    if (line ~= '') then
+      local line_weights = string.split(line,' ')
+      for i,v in pairs(line_weights) do
+        line_weights[i] = tonumber(v)
+      end
+      table.insert(weights, line_weights)
+    end
+  end
+  print(weights)
+  return nodes, weights
+end
+
+return {
+  Trainer = DecentralizedSGD,
+  LoadConfigFromFile = LoadConfigFromFile
+}
 
