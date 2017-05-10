@@ -7,7 +7,7 @@ local posix = require 'posix'
 -- nodes is a list of hostname and port numbers
 -- node_weights is a matrix for parameter weights for different nodes
 -- node_id is the ID of this node
--- self_parameters is a tensor of training parameters
+-- self_parameters is a table of tensors of training parameters
 local function DecentralizedSGD(nodes, node_weights, node_id, self_parameters)
 
   -- thread pool
@@ -36,8 +36,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, self_parameters)
   -- the counter will +1 after send/get one weight
   local sync_progress = tds.AtomicCounter()
   -- create tensors for receiving tensors from peers
-  torch.setdefaulttensortype(self_parameters:type())
-  local t_recv = torch.Tensor()
+  local t_recv = { } -- a table of torch.Tensor() for receiving tensors
 
   -- find IP of this node
   local function GetSelfIP()
@@ -133,6 +132,12 @@ local function DecentralizedSGD(nodes, node_weights, node_id, self_parameters)
         break
       end
     end
+    -- generate ordered keys for the table of parameters
+    local ordered_keys = {}
+    for k in pairs(self_parameters) do
+      table.insert(ordered_keys, k)
+    end
+    table.sort(ordered_keys)
     -- wait for all threads be ready
     -- barrier
     thread_print("Waiting for training starts!")
@@ -147,7 +152,11 @@ local function DecentralizedSGD(nodes, node_weights, node_id, self_parameters)
       thread_print("All clients connected. Waiting for requests!")
       server:clients(function(client)
         if (client:recv() == 'getblock') then
-          client:send(self_parameters)
+          -- send the parameters by sorted order
+          for i = 1, #ordered_keys do
+            local key = ordered_keys[i]
+            client:send(self_parameters[key])
+          end
         else
           error('unexpected command from client')
         end
@@ -191,6 +200,12 @@ local function DecentralizedSGD(nodes, node_weights, node_id, self_parameters)
         error('server protocol mismatch')
       end
       thread_print('got 0.1 from server')
+      -- generate ordered keys for the table of parameters
+      local ordered_keys = {}
+      for k in pairs(t_recv) do
+        table.insert(ordered_keys, k)
+      end
+      table.sort(ordered_keys)
       -- wait for all threads be ready
       -- barrier
       thread_print("Waiting for training starts!")
@@ -204,7 +219,10 @@ local function DecentralizedSGD(nodes, node_weights, node_id, self_parameters)
         client:send('getblock')
         thread_print(string.format('receiving tensor for thread %d', __threadid))
         posix.sleep(1)
-        client:recv(t_recv[tid])
+        for i = 1,#ordered_keys do
+          local key = ordered_keys[i]
+          client:recv(t_recv[key][tid])
+        end
         thread_print('received tensor')
         -- barrier
         sync_lock:lock()
@@ -231,10 +249,17 @@ local function DecentralizedSGD(nodes, node_weights, node_id, self_parameters)
       end
     end
     
-    local new_size = torch.totable(self_parameters:size())
-    table.insert(new_size,1,#clients)
-    print("creating temp tensor with size ", new_size)
-    t_recv:resize(table.unpack(new_size))
+    local prev_type = torch.getdefaulttensortype()
+    -- create temporary tensors for receiving
+    for key, tensor in pairs(self_parameters) do
+      local new_size = torch.totable(tensor:size())
+      table.insert(new_size, 1, #clients)
+      print("creating temp tensor with size ", new_size)
+      -- t_recv:resize(table.unpack(new_size))
+      torch.setdefaulttensortype(tensor:type())
+      t_recv[key] = torch.Tensor(table.unpack(new_size))
+    end
+    torch.setdefaulttensortype(prev_type)
 
     -- create threads
     print(clients)
@@ -288,9 +313,13 @@ local function DecentralizedSGD(nodes, node_weights, node_id, self_parameters)
 
   local function AverageParameters()
     -- we have sent tensors to all peers and got all tensors from peers, now do an average
-    self_parameters:mul(self_weight)
+    for key, tensor in pairs(self_parameters) do
+      tensor:mul(self_weight)
+    end
     for j = 1,#clients_weights do
-      self_parameters:add(clients_weights[j], t_recv[j])
+      for key, tensor in pairs(self_parameters) do
+        tensor:add(clients_weights[j], t_recv[key][j])
+      end
     end
     -- start next iteration
     sync_cond:broadcast()

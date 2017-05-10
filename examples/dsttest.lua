@@ -10,7 +10,9 @@ Decentralized SGD testing
 ]]
 
 -- The shared tensor, just for testing
-local t = torch.FloatTensor(1024,1024):fill(opt.nodeID)
+local t = {tensor1 = torch.FloatTensor(1024,1024):fill(opt.nodeID),
+           tensor2 = torch.DoubleTensor(256,128):fill(torch.uniform())
+          }
 
 -- load nodes and weights from a file
 nodes, weights = DecentralizedSGD.LoadConfigFromFile(opt.nodesFile, opt.weightsFile)
@@ -41,7 +43,8 @@ for i = 1,10 do
   end
   print("Averaging...")
   dstsgd.AverageParameters()
-  print(t[1][1])
+  print(t.tensor1[1][1], t.tensor1[1024][1024])
+  print(t.tensor2[1][1], t.tensor2[256][128])
 end
 
 dstsgd.Terminate()
