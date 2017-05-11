@@ -1,15 +1,16 @@
 local ipc = require 'libipc'
 local threads = require 'threads'
 local tds = require 'tds'
-local colors = require 'ansicolors'
 local posix = require 'posix'
 
 -- nodes is a list of hostname and port numbers
 -- node_weights is a matrix for parameter weights for different nodes
 -- node_id is the ID of this node
 -- self_parameters is a table of tensors of training parameters
-local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters)
+local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, cuda)
 
+  -- use cuda or not
+  local cuda = cuda or true
   -- thread pool
   local pool
   -- network parameters of myself
@@ -110,13 +111,13 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters)
   -- define server thread
   local server_thread = function(sync_lock_id, sync_cond_id) 
     local ipc = require 'libipc'
-    local colors = require 'ansicolors'
     local threads = require 'threads'
     local posix = require 'posix'
     local sync_lock = threads.Mutex(sync_lock_id)
     local sync_cond = threads.Condition(sync_cond_id)
     thread_print = function(str)
       if debug then
+        local colors = require 'ansicolors'
         print(colors('%{1}[SERVER 0]'..tostring(str)))
       end
     end
@@ -204,7 +205,6 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters)
   local function make_client_thread(peer)
     return function(tid, sync_lock_id, sync_cond_id)
       local ipc = require 'libipc'
-      local colors = require 'ansicolors'
       local threads = require 'threads'
       local posix = require 'posix'
       local sync_lock = threads.Mutex(sync_lock_id)
@@ -212,6 +212,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters)
       posix.sleep(10)
       thread_print = function(str)
         if debug then
+          local colors = require 'ansicolors'
           print(colors('%{'..(tid+1)..'}[CLIENT '..tid..']'..tostring(str)))
         end
       end
@@ -299,7 +300,12 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters)
     print(clients)
     print("start creating servers")
     -- now start our server and client thread
-    pool = threads.Threads(1 + #clients)
+    pool = threads.Threads(1 + #clients, function(threadid)
+                                           if cuda then
+                                             require 'cunn'
+                                             require 'cudnn'
+                                           end
+                                         end)
     print("start creating clients")
     pool:addjob(server_thread, function() end, sync_lock_id, sync_cond_id)
     for i = 1,#clients do
