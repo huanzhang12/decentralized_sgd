@@ -170,10 +170,15 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters)
       thread_print("All clients connected. Waiting for requests!")
       server:clients(function(client)
         if (client:recv() == 'getblock') then
-          -- send the parameters by sorted order
-          for i = 1, #ordered_keys do
-            local key = ordered_keys[i]
-            client:send(self_parameters[key])
+          if #ordered_keys == 1 then
+            -- only one element, send it directly!
+            client:send(self_parameters[ordered_keys[1]])
+          else
+            -- send the parameters by sorted order
+            for i = 1, #ordered_keys do
+              local key = ordered_keys[i]
+              client:send(self_parameters[key])
+            end
           end
         else
           error('unexpected command from client')
@@ -241,9 +246,14 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters)
         if debug then
           posix.sleep(1)
         end
-        for i = 1,#ordered_keys do
-          local key = ordered_keys[i]
-          client:recv(t_recv[key][tid])
+        if #ordered_keys == 1 then
+          -- only one element in the table, receive directly
+          client:recv(t_recv[ordered_keys[1]][tid])
+        else
+          for i = 1,#ordered_keys do
+            local key = ordered_keys[i]
+            client:recv(t_recv[key][tid])
+          end
         end
         thread_print('received tensor')
         -- barrier
