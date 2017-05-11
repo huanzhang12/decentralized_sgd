@@ -126,28 +126,30 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters)
     -- on initialization, wait for num_clients clients
     thread_print(string.format('Server at %s:%d waiting...', self_ip, self_port))
     local i = 1
-    while true do
-      thread_print("Waiting for "..i.." incoming connections")
-      server:clients(i, function(client)
-        -- skip the clients that we have connected to
-        if (client:tag() and tonumber(client:tag()) < i) then
-          return
+    if nr_incoming > 0 then
+      while true do
+        thread_print("Waiting for "..i.." incoming connections")
+        server:clients(i, function(client)
+          -- skip the clients that we have connected to
+          if (client:tag() and tonumber(client:tag()) < i) then
+            return
+          end
+          client:tag(tostring(i))
+          i = i + 1
+          if (client:recv() ~= 'ver') then
+            error('client protocol mismatch!')
+          end
+          thread_print('server received ver from client')
+          -- server sends version message to client
+          client:send('0.1')
+        end)
+        if debug then
+          posix.sleep(1)
         end
-        client:tag(tostring(i))
-        i = i + 1
-        if (client:recv() ~= 'ver') then
-          error('client protocol mismatch!')
+        thread_print(i.." incoming connections")
+        if i > nr_incoming then
+          break
         end
-        thread_print('server received ver from client')
-        -- server sends version message to client
-        client:send('0.1')
-      end)
-      if debug then
-        posix.sleep(1)
-      end
-      thread_print(i.." incoming connections")
-      if i > nr_incoming then
-        break
       end
     end
     -- generate ordered keys for the table of parameters
