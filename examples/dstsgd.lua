@@ -251,12 +251,21 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
           posix.sleep(1)
         end
         if #ordered_keys == 1 then
-          -- only one element in the table, receive directly
-          client:recv(t_recv[ordered_keys[1]][tid])
+          local key = ordered_keys[1]
+          -- only one element in the table, receive directly, without handshaking
+          client:recv(t_recv[key][tid])
+          if tid == 1 then
+            -- do the multiplication here, instead of during averaging
+            t_recv[key][1]:mul(clients_weights[1])
+          end
         else
           for i = 1,#ordered_keys do
             local key = ordered_keys[i]
             client:recv(t_recv[key][tid])
+            if tid == 1 then
+              -- do the multiplication here, instead of during averaging
+              t_recv[key][1]:mul(clients_weights[1])
+            end
           end
         end
         thread_print('received tensor')
@@ -280,8 +289,8 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
     -- make client threads, and save corresponding weights
     for i, pw in pairs(peer_weights) do
       if pw ~= 0 then
-        table.insert(clients, make_client_thread(nodes[i]))
         table.insert(clients_weights, pw)
+        table.insert(clients, make_client_thread(nodes[i]))
       end
     end
     
@@ -374,9 +383,13 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
           self_data[i] = s
         end
       else
-        tensor:mul(self_weight)
-        for j = 1,n_clients_weights do
-          tensor:add(clients_weights[j], t_recv[key][j])
+        if n_clients_weights > 0 then
+          for j = 2,n_clients_weights do
+            t_recv[key][1]:add(clients_weights[j], t_recv[key][j])
+          end
+          torch.add(tensor, t_recv[key][1], self_weight, tensor)
+        else
+          tensor:mul(self_weight)
         end
       end
     end
