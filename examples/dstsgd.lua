@@ -64,7 +64,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
       local ip, _ = s:getsockname()
       local found = false
       for rank, hostport in ipairs(nodes) do
-        if hostport["host"] == ip then
+        if hostport["host"] == ip or socket.dns.toip(hostport["host"]) == ip or hostport["host"] == socket.dns.gethostname() then
           found = true
           hostport["self"] = true
           self_ip = ip
@@ -367,6 +367,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
     local n_clients_weights = #clients_weights
     -- we have sent tensors to all peers and got all tensors from peers, now do an average
     for key, tensor in pairs(self_parameters) do
+      --[[
       if tensor:isContiguous() and not string.find(torch.typename(tensor), 'Cuda') then
       -- if false then 
         local self_data = torch.data(tensor)
@@ -383,6 +384,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
           self_data[i] = s
         end
       else
+      --]]
         if n_clients_weights > 0 then
           for j = 2,n_clients_weights do
             t_recv[key][1]:add(clients_weights[j], t_recv[key][j])
@@ -391,7 +393,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
         else
           tensor:mul(self_weight)
         end
-      end
+      --end
     end
     -- start next iteration
     sync_cond:broadcast()
