@@ -42,7 +42,8 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
   -- flatten the parameter table
   local self_parameters = { }
   -- debug print's
-  local debug = false
+  local debug = true
+  local thread_print = print
   
   local function ExpandParameters(param, keyname)
     if type(param) == 'table' then
@@ -176,6 +177,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
       thread_print("All clients connected. Waiting for requests!")
       server:clients(function(client)
         if (client:recv() == 'getblock') then
+          thread_print("Got request from client "..client:tag())
           if #ordered_keys == 1 then
             -- only one element, send it directly!
             client:send(self_parameters[ordered_keys[1]])
@@ -186,6 +188,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
               client:send(self_parameters[key])
             end
           end
+          thread_print("Tensors sent to client "..client:tag())
         else
           error('unexpected command from client')
         end
@@ -194,6 +197,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
       -- barrier
       sync_lock:lock()
       sync_progress[1] = sync_progress[1] + 1
+      thread_print("sleeping..."..sync_progress[1])
       sync_cond:wait(sync_lock)
       sync_lock:unlock()
       if (exit_flag[1] == 1) then
@@ -243,8 +247,8 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
       -- barrier
       thread_print("Waiting for training starts!")
       sync_lock:lock()
-      thread_print("sleeping...")
       sync_progress[1] = sync_progress[1] + 1
+      thread_print("sleeping..."..sync_progress[1])
       sync_cond:wait(sync_lock)
       sync_lock:unlock()
       while true do
@@ -276,6 +280,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
         -- barrier
         sync_lock:lock()
         sync_progress[1] = sync_progress[1] + 1
+        thread_print("sleeping..."..sync_progress[1])
         sync_cond:wait(sync_lock)
         sync_lock:unlock()
         if (exit_flag[1] == 1) then
@@ -325,6 +330,14 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
     for i = 1,#clients do
       pool:addjob(clients[i], function() end, i, sync_lock_id, sync_cond_id)
     end
+    thread_print = function(str)
+      if debug then
+        local colors = require 'ansicolors'
+        local sec, nano
+        sec, nano = posix.clock_gettime('CLOCK_MONOTONIC')
+        print(colors(string.format('%%{%d}[%10d.%9d][SERVER 0] %s', #clients + 2, sec, nano, str)))
+      end
+    end
 
   end
 
@@ -345,6 +358,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
       local nr_connected = sync_progress[1]
       print("Waiting for peers, "..nr_connected.." of "..total_threads)
       if (nr_connected == total_threads) then
+        thread_print("All pairs connected, progress="..sync_progress[1])
         sync_progress[1] = 0
         sync_cond:broadcast()
         sync_lock:unlock()
@@ -359,6 +373,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
   local function CheckIfSyncDone()
     sync_lock:lock()
     if (sync_progress[1] == total_threads) then
+      thread_print("Synced, progress="..sync_progress[1])
       sync_progress[1] = 0
       return true
       -- lock will be released in AverageParameters()

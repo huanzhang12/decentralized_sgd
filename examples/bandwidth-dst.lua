@@ -46,7 +46,7 @@ while true do
     posix.nanosleep(0,100000)
     retry = retry + 1
     -- check the atomic counter to see if we have finished communication
-    if dstsgd.CheckIfSyncDone() or (retry > 5000) then
+    if dstsgd.CheckIfSyncDone() or (retry > 50000) then
       break
     end
   end
@@ -62,7 +62,7 @@ while true do
     timer:reset()
     timer:resume()
   end
-  if j > 20 then
+  if j >= opt.loops then
     dstsgd.SetExitFlag()
     j = - 1
   end
