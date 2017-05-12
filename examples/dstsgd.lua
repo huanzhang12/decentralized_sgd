@@ -210,7 +210,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
       local posix = require 'posix'
       local sync_lock = threads.Mutex(sync_lock_id)
       local sync_cond = threads.Condition(sync_cond_id)
-      posix.sleep(10)
+      posix.sleep(5)
       thread_print = function(str)
         if debug then
           local colors = require 'ansicolors'
@@ -348,7 +348,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
       else
         sync_lock:unlock()
       end
-      posix.sleep(5)
+      posix.sleep(2)
     end
   end
 
