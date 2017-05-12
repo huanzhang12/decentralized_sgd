@@ -1,6 +1,5 @@
 local ipc = require 'libipc'
 local threads = require 'threads'
-local tds = require 'tds'
 local posix = require 'posix'
 
 -- nodes is a list of hostname and port numbers
@@ -19,6 +18,8 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
   local peer_weights
   -- number of incoming peers
   local nr_incoming
+  -- total number of worker threads
+  local total_threads
   -- shared flag for exiting worker threads
   local exit_flag = torch.IntTensor(1):fill(0)
   -- thread pool for clients and servers
@@ -35,7 +36,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
   local sync_cond = threads.Condition()
   local sync_cond_id = sync_cond:id()
   -- the counter will +1 after send/get one weight
-  local sync_progress = tds.AtomicCounter()
+  local sync_progress = torch.IntTensor(1):fill(0)
   -- create tensors for receiving tensors from peers
   local t_recv = { } -- a table of torch.Tensor() for receiving tensors
   -- flatten the parameter table
@@ -164,7 +165,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
     thread_print("Waiting for training starts!")
     sync_lock:lock()
     thread_print("sleeping...")
-    sync_progress:inc()
+    sync_progress[1] = sync_progress[1] + 1
     sync_cond:wait(sync_lock)
     sync_lock:unlock()
     -- now, start the main service loop
@@ -190,7 +191,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
       thread_print("tensors sent to all clients!")
       -- barrier
       sync_lock:lock()
-      sync_progress:inc()
+      sync_progress[1] = sync_progress[1] + 1
       sync_cond:wait(sync_lock)
       sync_lock:unlock()
       if (exit_flag[1] == 1) then
@@ -239,7 +240,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
       thread_print("Waiting for training starts!")
       sync_lock:lock()
       thread_print("sleeping...")
-      sync_progress:inc()
+      sync_progress[1] = sync_progress[1] + 1
       sync_cond:wait(sync_lock)
       sync_lock:unlock()
       while true do
@@ -261,7 +262,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
         thread_print('received tensor')
         -- barrier
         sync_lock:lock()
-        sync_progress:inc()
+        sync_progress[1] = sync_progress[1] + 1
         sync_cond:wait(sync_lock)
         sync_lock:unlock()
         if (exit_flag[1] == 1) then
@@ -325,13 +326,13 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
 
   local function StartCommunication()
     -- wait for all peers are ready
-    local total_threads = #clients + 1
+    total_threads = #clients + 1
     while true do
       sync_lock:lock()
-      local nr_connected = sync_progress:get()
+      local nr_connected = sync_progress[1]
       print("Waiting for peers, "..nr_connected.." of "..total_threads)
       if (nr_connected == total_threads) then
-        sync_progress:set(0)
+        sync_progress[1] = 0
         sync_cond:broadcast()
         sync_lock:unlock()
         break
@@ -343,10 +344,9 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
   end
 
   local function CheckIfSyncDone()
-    local total_threads = #clients + 1
     sync_lock:lock()
-    if (sync_progress:get() == total_threads) then
-      sync_progress:set(0)
+    if (sync_progress[1] == total_threads) then
+      sync_progress[1] = 0
       return true
       -- lock will be released in AverageParameters()
     end
@@ -358,8 +358,8 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
     local n_clients_weights = #clients_weights
     -- we have sent tensors to all peers and got all tensors from peers, now do an average
     for key, tensor in pairs(self_parameters) do
-      if tensor:isContiguous() then
-      -- if false then
+      if tensor:isContiguous() and not string.find(torch.typename(tensor), 'Cuda') then
+      -- if false then 
         local self_data = torch.data(tensor)
         local clients_data = {}
         for j = 1,n_clients_weights do
