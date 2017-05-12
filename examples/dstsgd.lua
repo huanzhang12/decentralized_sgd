@@ -355,13 +355,29 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
   end
 
   local function AverageParameters()
+    local n_clients_weights = #clients_weights
     -- we have sent tensors to all peers and got all tensors from peers, now do an average
     for key, tensor in pairs(self_parameters) do
-      tensor:mul(self_weight)
-    end
-    for j = 1,#clients_weights do
-      for key, tensor in pairs(self_parameters) do
-        tensor:add(clients_weights[j], t_recv[key][j])
+      if tensor:isContiguous() then
+      -- if false then
+        local self_data = torch.data(tensor)
+        local clients_data = {}
+        for j = 1,n_clients_weights do
+          table.insert(clients_data, torch.data(t_recv[key][j]))
+        end
+        -- access cdata
+        for i = 0, tensor:nElement()-1 do
+          local s = self_data[i] * self_weight
+          for j = 1,n_clients_weights do
+            s = s + clients_data[j][i] * clients_weights[j]
+          end
+          self_data[i] = s
+        end
+      else
+        tensor:mul(self_weight)
+        for j = 1,n_clients_weights do
+          tensor:add(clients_weights[j], t_recv[key][j])
+        end
       end
     end
     -- start next iteration
