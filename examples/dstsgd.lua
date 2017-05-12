@@ -9,7 +9,9 @@ local posix = require 'posix'
 local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, cuda)
 
   -- use cuda or not
-  local cuda = cuda or true
+  if cuda == nil then
+    cuda = true
+  end
   -- thread pool
   local pool
   -- network parameters of myself
@@ -42,7 +44,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
   -- flatten the parameter table
   local self_parameters = { }
   -- debug print's
-  local debug = true
+  local debug = false
   local thread_print = print
   
   local function ExpandParameters(param, keyname)
@@ -254,7 +256,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
       while true do
         thread_print('requesting tensor!')
         client:send('getblock')
-        thread_print(string.format('receiving tensor for thread %d', __threadid))
+        thread_print(string.format('receiving tensor for thread %d', tid))
         if debug then
           -- posix.sleep(1)
         end
