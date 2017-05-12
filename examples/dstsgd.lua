@@ -119,7 +119,9 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
     thread_print = function(str)
       if debug then
         local colors = require 'ansicolors'
-        print(colors('%{1}[SERVER 0]'..tostring(str)))
+        local sec, nano
+        sec, nano = posix.clock_gettime('CLOCK_MONOTONIC')
+        print(colors(string.format('%%{1}[%10d.%9d][SERVER 0] %s', sec, nano, str)))
       end
     end
     thread_print(string.format("mutex ID is %d", sync_lock_id))
@@ -146,7 +148,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
           client:send('0.1')
         end)
         if debug then
-          posix.sleep(1)
+          -- posix.sleep(1)
         end
         thread_print(i.." incoming connections")
         if i > nr_incoming then
@@ -214,7 +216,9 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
       thread_print = function(str)
         if debug then
           local colors = require 'ansicolors'
-          print(colors('%{'..(tid+1)..'}[CLIENT '..tid..']'..tostring(str)))
+          local sec, nano
+          sec, nano = posix.clock_gettime('CLOCK_MONOTONIC')
+          print(colors(string.format('%%{%d}[%10d.%9d][CLIENT %d] %s', tid+1, sec, nano, tid, str)))
         end
       end
       thread_print(string.format("Thread %d mutex ID is %d", tid, sync_lock_id))
@@ -248,7 +252,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
         client:send('getblock')
         thread_print(string.format('receiving tensor for thread %d', __threadid))
         if debug then
-          posix.sleep(1)
+          -- posix.sleep(1)
         end
         if #ordered_keys == 1 then
           local key = ordered_keys[1]

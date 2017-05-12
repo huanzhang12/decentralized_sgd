@@ -8,13 +8,14 @@ Decentralized SGD testing
    --weightsFile       (default 'weights.txt')  A text file with weights for parameters from different machines
    --nodeID            (default 0)              Which node is this machine? Set 0 for auto
    --gpu               (default 0)              Use CUDA tensor
+   --loops             (default 20)             How many seconds to test
 ]]
 
-require 'cutorch'
 
 -- The shared tensor, just for testing
 local t = { }
 if opt.gpu == 1 then
+  require 'cutorch'
   t.tensor1 = torch.FloatTensor(1024,1024):fill(opt.nodeID):cuda();
 else
   t.tensor1 = torch.FloatTensor(1024,1024):fill(opt.nodeID);
