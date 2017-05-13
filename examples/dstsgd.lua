@@ -398,6 +398,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
                                              require 'cunn'
                                              require 'cudnn'
                                            end
+                                           torch.setnumthreads(1)
                                          end)
     print("start creating clients")
     pool:addjob(server_thread, function() end, sync_lock_id, sync_cond_id)
