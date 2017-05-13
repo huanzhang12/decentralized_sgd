@@ -6,7 +6,7 @@ local posix = require 'posix'
 -- node_weights is a matrix for parameter weights for different nodes
 -- node_id is the ID of this node
 -- self_parameters is a table of tensors of training parameters
-local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, cuda)
+local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, cuda, chunk_size)
 
   -- use cuda or not
   if cuda == nil then
@@ -44,7 +44,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
   -- flatten the parameter table
   local self_parameters = { }
   -- chunk size
-  local chunk_size = 16384
+  chunk_size = chunk_size or 16384
   -- debug print's
   local debug = false
   local thread_print = print
@@ -130,7 +130,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
         local colors = require 'ansicolors'
         local sec, nano
         sec, nano = posix.clock_gettime('CLOCK_MONOTONIC')
-        print(colors(string.format('%%{1}[%10d.%9d][SERVER 0] %s', sec, nano, str)))
+        print(colors(string.format('%%{1}[%10d.%9d][SERVER 0 %d] %s', sec, nano, __threadid, str)))
       end
     end
     thread_print(string.format("mutex ID is %d", sync_lock_id))
@@ -282,7 +282,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
           local colors = require 'ansicolors'
           local sec, nano
           sec, nano = posix.clock_gettime('CLOCK_MONOTONIC')
-          print(colors(string.format('%%{%d}[%10d.%9d][CLIENT %d] %s', tid+1, sec, nano, tid, str)))
+          print(colors(string.format('%%{%d}[%10d.%9d][CLIENT %d %d] %s', tid+1, sec, nano, tid, __threadid, str)))
         end
       end
       thread_print(string.format("Thread %d mutex ID is %d", tid, sync_lock_id))
@@ -387,13 +387,15 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
 
     -- create threads
     print(clients)
-    print("start creating servers")
+    print("start creating servers with transmission chunk size "..chunk_size)
     -- now start our server and client thread
     pool = threads.Threads(1 + #clients, function(threadid)
+                                           require 'torch'
                                            if cuda then
                                              require 'cunn'
                                              require 'cudnn'
                                            end
+                                           torch.setnumthreads(1)
                                          end)
     print("start creating clients")
     pool:addjob(server_thread, function() end, sync_lock_id, sync_cond_id)

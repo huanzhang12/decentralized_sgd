@@ -9,24 +9,28 @@ Decentralized SGD testing
    --nodeID            (default 0)              Which node is this machine? Set 0 for auto
    --gpu               (default 0)              Use CUDA tensor
    --loops             (default 20)             How many seconds to test
+   --chunkSize         (default 16384)          Transfer chunk size
 ]]
 
 
 -- The shared tensor, just for testing
 local t = { }
+local use_gpu = false
 if opt.gpu == 1 then
   require 'cutorch'
   t.tensor1 = torch.FloatTensor(1024,1024):fill(opt.nodeID):cuda();
+  use_gpu = true
 else
   t.tensor1 = torch.FloatTensor(1024,1024):fill(opt.nodeID);
 end
 
+torch.setnumthreads(1)
 
 -- load nodes and weights from a file
 nodes, weights = DecentralizedSGD.LoadConfigFromFile(opt.nodesFile, opt.weightsFile)
 
 -- create decentralized trainer object
-dstsgd = DecentralizedSGD.Trainer(nodes, weights, opt.nodeID, t)
+dstsgd = DecentralizedSGD.Trainer(nodes, weights, opt.nodeID, t, use_gpu, opt.chunkSize)
 
 print("Start init")
 dstsgd.Init()
@@ -46,7 +50,7 @@ while true do
     posix.nanosleep(0,100000)
     retry = retry + 1
     -- check the atomic counter to see if we have finished communication
-    if dstsgd.CheckIfSyncDone() or (retry > 50000) then
+    if dstsgd.CheckIfSyncDone() or (retry > 500000) then
       break
     end
   end

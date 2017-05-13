@@ -7,6 +7,8 @@ Decentralized SGD testing
    --nodesFile         (default 'nodes.txt')    A text file with all host names and port number
    --weightsFile       (default 'weights.txt')  A text file with weights for parameters from different machines
    --nodeID            (default 0)              Which node is this machine? Set 0 for auto
+   --loops             (default 20)             How many seconds to test
+   --chunkSize         (default 16384)          Transfer chunk size
 ]]
 
 require 'cutorch'
@@ -21,7 +23,7 @@ local t = {tensor1 = torch.FloatTensor(3,16384):fill(opt.nodeID):cuda(),
 nodes, weights = DecentralizedSGD.LoadConfigFromFile(opt.nodesFile, opt.weightsFile)
 
 -- create decentralized trainer object
-dstsgd = DecentralizedSGD.Trainer(nodes, weights, opt.nodeID, t)
+dstsgd = DecentralizedSGD.Trainer(nodes, weights, opt.nodeID, t, true, opt.chunkSize)
 
 print("Start init")
 dstsgd.Init()
@@ -30,7 +32,7 @@ print("Init done.")
 dstsgd.StartCommunication()
 print("Ready to train!")
 
-for i = 1,10 do
+for i = 1,opt.loops do
   print("Iteration ", i)
   while true do
     -- compute gradients, etc
@@ -41,7 +43,7 @@ for i = 1,10 do
       break
     end
   end
-  if i == 10 then
+  if i == opt.loops then
     dstsgd.SetExitFlag()
   end
   print("Averaging...")
