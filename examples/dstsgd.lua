@@ -53,7 +53,11 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
         ExpandParameters(val, keyname..'_'..key)
       end
     elseif string.match(torch.typename(param), "Tensor") then
-      self_parameters[keyname] = param
+      local prev_type = torch.getdefaulttensortype()
+      torch.setdefaulttensortype(param:type())
+      -- flatten the tensor to 1D
+      self_parameters[keyname] = torch.Tensor(param:storage())
+      torch.setdefaulttensortype(prev_type)
     end
   end
 
@@ -132,7 +136,15 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
     local server = ipc.server(self_ip, self_port)
     -- on initialization, wait for num_clients clients
     thread_print(string.format('Server at %s:%d waiting...', self_ip, self_port))
+    -- generate sorted keys
+    local ordered_keys = {}
+    for k in pairs(self_parameters) do
+      table.insert(ordered_keys, k)
+    end
+    table.sort(ordered_keys)
     local i = 1
+    -- how many bytes have been sent on this client
+    local clients_state = { }
     if nr_incoming > 0 then
       while true do
         thread_print("Waiting for "..i.." incoming connections")
@@ -142,6 +154,8 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
             return
           end
           client:tag(tostring(i))
+          -- current status: first tensor, 0 element sent
+          table.insert(clients_state, {current_tensor=1, elem_sent=0})
           i = i + 1
           if (client:recv() ~= 'ver') then
             error('client protocol mismatch!')
@@ -160,11 +174,24 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
       end
     end
     -- generate ordered keys for the table of parameters
-    local ordered_keys = {}
-    for k in pairs(self_parameters) do
-      table.insert(ordered_keys, k)
+    send_partial_tensor = function(tensor, tensor_state, client)
+      -- find the start and end pos
+      local ret = false
+      local n_elem = tensor:nElement()
+      local start_pos = tensor_state.elem_sent
+      if start_pos > n_elem then
+        return true
+      end
+      local end_pos = tensor_state.elem_sent + 16384 - 1
+      if end_pos >= n_elem then
+        end_pos = n_elem
+        ret = true
+      end
+      thread_print(string.format("client %s send %d from %d to %d", client:tag(), tensor_state.current_tensor, start_pos, end_pos))
+      client:send(tensor[{{start_pos, end_pos}}])
+      tensor_state.elem_sent = end_pos + 1
+      return ret
     end
-    table.sort(ordered_keys)
     -- wait for all threads be ready
     -- barrier
     thread_print("Waiting for training starts!")
@@ -177,24 +204,53 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
     while true do
       -- wait for the next trigger
       thread_print("All clients connected. Waiting for requests!")
-      server:clients(function(client)
-        if (client:recv() == 'getblock') then
-          thread_print("Got request from client "..client:tag())
-          if #ordered_keys == 1 then
-            -- only one element, send it directly!
-            client:send(self_parameters[ordered_keys[1]])
-          else
-            -- send the parameters by sorted order
-            for i = 1, #ordered_keys do
-              local key = ordered_keys[i]
-              client:send(self_parameters[key])
+      local finished_clients = 0
+      -- polling loop
+      while true do
+        server:clients(function(client)
+          thread_print("checking client "..client:tag())
+          local k = tonumber(client:tag())
+          local state = clients_state[k]
+          if state.current_tensor == 1 and state.elem_sent == 0 then
+            -- have not received getblock yet
+            if (client:recvAsync() == 'getblock') then
+              -- received getblock request!
+              -- prepare to send
+              state.elem_sent = 1
+              thread_print(string.format("client %s received getblock", client:tag()))
             end
+            thread_print("not received")
+          elseif state.current_tensor > 0 then
+            -- get last progress
+            local key = ordered_keys[state.current_tensor]
+            local tensor = self_parameters[key]
+            if send_partial_tensor(tensor, state, client) then
+              -- if returned true, this tensor has been sent
+              local next_key = ordered_keys[state.current_tensor + 1]
+              if next_key then
+                -- move to the next tensor
+                state.current_tensor = state.current_tensor + 1
+                state.elem_sent = 1
+              else
+                -- no tensors left, we are done
+                state.current_tensor = -1
+                finished_clients = finished_clients + 1
+              end
+            end
+          else
+            thread_print(string.format("already done, finished %d, all %d", finished_clients, #clients_state))
           end
-          thread_print("Tensors sent to client "..client:tag())
-        else
-          error('unexpected command from client')
+        end)
+        if finished_clients == #clients_state then
+          break
         end
-      end)
+        posix.nanosleep(0,100000)
+      end
+      -- clear the clients_state for next iteration
+      for k, v in pairs(clients_state) do
+        v.current_tensor = 1
+        v.elem_sent = 0
+      end
       thread_print("tensors sent to all clients!")
       -- barrier
       sync_lock:lock()
@@ -260,22 +316,32 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
         if debug then
           -- posix.sleep(1)
         end
-        if #ordered_keys == 1 then
-          local key = ordered_keys[1]
-          -- only one element in the table, receive directly, without handshaking
-          client:recv(t_recv[key][tid])
-          if tid == 1 then
-            -- do the multiplication here, instead of during averaging
-            t_recv[key][1]:mul(clients_weights[1])
-          end
-        else
-          for i = 1,#ordered_keys do
-            local key = ordered_keys[i]
-            client:recv(t_recv[key][tid])
-            if tid == 1 then
-              -- do the multiplication here, instead of during averaging
-              t_recv[key][1]:mul(clients_weights[1])
+        -- receive tensor blocks, each one is 16 KB
+        local current_tensor = 1
+        local ind_recv = 1
+        while true do
+          local key = ordered_keys[current_tensor]
+          if key then
+            local tensor = t_recv[key][tid]
+            local ind_end = ind_recv + 16384 - 1;
+            local new_ind_recv = ind_end + 1
+            if ind_end >= tensor:nElement() then
+              -- this tensor is done, start the next one
+              ind_end = tensor:nElement()
+              current_tensor = current_tensor + 1
+              new_ind_recv = 1
             end
+            thread_print(string.format("receiving %d size %d from %d to %d", current_tensor, tensor:nElement(), ind_recv, ind_end))
+            client:recv(t_recv[key][tid][{{ind_recv, ind_end}}])
+            ind_recv = new_ind_recv
+          else
+            break
+          end
+        end
+        if tid == 1 then
+          -- do the multiplication here, instead of during averaging
+          for i, key in pairs(ordered_keys) do
+            t_recv[key][1]:mul(clients_weights[1])
           end
         end
         thread_print('received tensor')

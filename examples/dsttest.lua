@@ -9,9 +9,12 @@ Decentralized SGD testing
    --nodeID            (default 0)              Which node is this machine? Set 0 for auto
 ]]
 
+require 'cutorch'
+
 -- The shared tensor, just for testing
-local t = {tensor1 = torch.FloatTensor(1024,1024):fill(opt.nodeID),
-           tensor2 = torch.DoubleTensor(256,128):fill(torch.uniform())
+local t = {tensor1 = torch.FloatTensor(3,16384):fill(opt.nodeID):cuda(),
+           tensor2 = torch.DoubleTensor(256,128):fill(torch.uniform()),
+           tensor3 = torch.FloatTensor(256,512):fill(torch.uniform()):cuda()
           }
 
 -- load nodes and weights from a file
@@ -43,8 +46,9 @@ for i = 1,10 do
   end
   print("Averaging...")
   dstsgd.AverageParameters()
-  print(t.tensor1[1][1], t.tensor1[1024][1024])
+  print(t.tensor1[1][1], t.tensor1[3][16384])
   print(t.tensor2[1][1], t.tensor2[256][128])
+  print(t.tensor3[1][1], t.tensor3[256][512])
 end
 
 dstsgd.Terminate()
