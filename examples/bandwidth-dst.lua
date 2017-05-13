@@ -18,10 +18,10 @@ local t = { }
 local use_gpu = false
 if opt.gpu == 1 then
   require 'cutorch'
-  t.tensor1 = torch.FloatTensor(1024,1024):fill(opt.nodeID):cuda();
+  t.tensor1 = torch.FloatTensor(270410):fill(opt.nodeID):cuda();
   use_gpu = true
 else
-  t.tensor1 = torch.FloatTensor(1024,1024):fill(opt.nodeID);
+  t.tensor1 = torch.FloatTensor(270410):fill(opt.nodeID);
 end
 
 torch.setnumthreads(1)
@@ -70,6 +70,7 @@ while true do
     dstsgd.SetExitFlag()
     j = - 1
   end
+  dstsgd.StartNextIter()
 end
 
 dstsgd.Terminate()

@@ -191,6 +191,9 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
       end
       thread_print(string.format("client %s send %d from %d to %d", client:tag(), tensor_state.current_tensor, start_pos, end_pos))
       client:send(tensor[{{start_pos, end_pos}}])
+      -- wait for sending complete! We must do this on old kernel
+      -- posix.nanosleep(0,chunk_size / (1000000000 / 8) * 1000000000)
+      -- posix.nanosleep(0,chunk_size * 8)
       tensor_state.elem_sent = end_pos + 1
       return ret
     end
@@ -395,7 +398,6 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
                                              require 'cunn'
                                              require 'cudnn'
                                            end
-                                           torch.setnumthreads(1)
                                          end)
     print("start creating clients")
     pool:addjob(server_thread, function() end, sync_lock_id, sync_cond_id)
@@ -486,6 +488,9 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
         end
       --end
     end
+  end
+
+  local function StartNextIter()
     -- start next iteration
     sync_cond:broadcast()
     sync_lock:unlock()
@@ -508,6 +513,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
     StartCommunication = StartCommunication,
     CheckIfSyncDone = CheckIfSyncDone,
     AverageParameters = AverageParameters,
+    StartNextIter = StartNextIter,
     SetExitFlag = SetExitFlag,
     Terminate = Terminate
   }
