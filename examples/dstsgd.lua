@@ -43,6 +43,8 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
   local t_recv = { } -- a table of torch.Tensor() for receiving tensors
   -- flatten the parameter table
   local self_parameters = { }
+  -- chunk size
+  local chunk_size = 16384
   -- debug print's
   local debug = false
   local thread_print = print
@@ -182,7 +184,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
       if start_pos > n_elem then
         return true
       end
-      local end_pos = tensor_state.elem_sent + 16384 - 1
+      local end_pos = tensor_state.elem_sent + chunk_size - 1
       if end_pos >= n_elem then
         end_pos = n_elem
         ret = true
@@ -323,7 +325,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
           local key = ordered_keys[current_tensor]
           if key then
             local tensor = t_recv[key][tid]
-            local ind_end = ind_recv + 16384 - 1;
+            local ind_end = ind_recv + chunk_size - 1;
             local new_ind_recv = ind_end + 1
             if ind_end >= tensor:nElement() then
               -- this tensor is done, start the next one
