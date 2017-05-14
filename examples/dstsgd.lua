@@ -385,6 +385,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
           end
         end
         thread_print('received tensor')
+        -- print("receiving sum: ", torch.sum(t_recv["_1"][tid]))
         -- barrier
         client_sync_lock:lock()
         client_sync_progress[1] = client_sync_progress[1] + 1
@@ -424,6 +425,8 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
       -- t_recv:resize(table.unpack(new_size))
       torch.setdefaulttensortype(tensor:type())
       t_recv[key] = torch.Tensor(table.unpack(new_size))
+      -- fill it with NaN for fault detection
+      t_recv[key]:fill(0/0)
     end
     torch.setdefaulttensortype(prev_type)
 
@@ -505,6 +508,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
       end
       posix.sleep(1)
     end
+    print("Starting Training!")
   end
 
   local function CheckIfClientSyncDone()
@@ -583,6 +587,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
           output = tensor
         end
         if n_clients_weights > 0 then
+          -- print("average: ", torch.sum(t_recv[key][1]))
           for j = 2,n_clients_weights do
             t_recv[key][1]:add(clients_weights[j], t_recv[key][j])
           end
