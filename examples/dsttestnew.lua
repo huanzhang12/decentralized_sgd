@@ -34,23 +34,22 @@ print("Ready to train!")
 
 for i = 1,opt.loops do
   print("Iteration ", i)
-  while true do
-    -- compute gradients, etc
-    posix.sleep(1)
-    print("Computing gradients...")
-    -- check the atomic counter to see if we have finished communication
-    if dstsgd.CheckIfSyncDone() then
-      break
-    end
-  end
-  if i == opt.loops then
-    dstsgd.SetExitFlag()
-  end
+  dstsgd.WaitForClientSyncDone()
   print("Averaging...")
-  dstsgd.AverageParameters()
+  local tmp_tensors = dstsgd.AverageParameters(true)
   print(t.tensor1[1][1], t.tensor1[3][16384])
   print(t.tensor2[1][1], t.tensor2[256][128])
   print(t.tensor3[1][1], t.tensor3[256][512])
+  dstsgd.WaitForServerSyncDone()
+  t.tensor1:copy(tmp_tensors._tensor1)
+  t.tensor2:copy(tmp_tensors._tensor2)
+  t.tensor3:copy(tmp_tensors._tensor3)
+  print(t.tensor1[1][1], t.tensor1[3][16384])
+  print(t.tensor2[1][1], t.tensor2[256][128])
+  print(t.tensor3[1][1], t.tensor3[256][512])
+  if i == opt.loops then
+    dstsgd.SetExitFlag()
+  end
   dstsgd.StartNextIter()
 end
 
