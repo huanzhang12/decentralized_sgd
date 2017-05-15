@@ -6,7 +6,7 @@ local posix = require 'posix'
 -- node_weights is a matrix for parameter weights for different nodes
 -- node_id is the ID of this node
 -- self_parameters is a table of tensors of training parameters
-local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, cuda, chunk_size, early_average)
+local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, cuda, chunk_size, early_average, gpu_buffer_storage, input_weights_storage)
 
   -- use cuda or not
   if cuda == nil then
@@ -14,6 +14,16 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
   end
   if early_average == nil then
     early_average = false
+  end
+  local copy_from_gpu = false
+  local gpu_buffer
+  local gpu_input_weights
+  if gpu_buffer_storage ~= nil then
+    copy_from_gpu = true
+    cuda = true
+    require 'cutorch'
+    gpu_buffer = torch.CudaTensor(gpu_buffer_storage)
+    gpu_input_weights = torch.CudaTensor(input_weights_storage)
   end
   -- thread pool
   local pool
@@ -225,6 +235,10 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
     while true do
       -- wait for the next trigger
       thread_print("All clients connected. Waiting for requests!")
+      -- copy model parameters from gpu buffer if necessary
+      if copy_from_gpu then
+        self_parameters["_1"]:copy(gpu_buffer)
+      end
       local finished_clients = 0
       -- unchoke all clients
       server:unchokeAll()
@@ -307,6 +321,10 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
             -- keep_model must be false
             tensor:mul(self_weight)
           end
+        end
+        -- also copy the new model parameter to GPU memory
+        if copy_from_gpu then
+          gpu_input_weights:copy(self_parameters["_1"])
         end
       end
       -- barrier
@@ -462,8 +480,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
     pool = threads.Threads(1 + #clients, function(threadid)
                                            require 'torch'
                                            if cuda then
-                                             require 'cunn'
-                                             require 'cudnn'
+                                             require 'cutorch'
                                            end
                                            torch.setnumthreads(1)
                                          end)
