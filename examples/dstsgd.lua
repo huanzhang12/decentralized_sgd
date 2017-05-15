@@ -6,11 +6,14 @@ local posix = require 'posix'
 -- node_weights is a matrix for parameter weights for different nodes
 -- node_id is the ID of this node
 -- self_parameters is a table of tensors of training parameters
-local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, cuda, chunk_size)
+local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, cuda, chunk_size, early_average)
 
   -- use cuda or not
   if cuda == nil then
     cuda = true
+  end
+  if early_average == nil then
+    early_average = false
   end
   -- thread pool
   local pool
@@ -30,6 +33,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
   local clients = { }
   -- weights for connected clients
   local clients_weights = { }
+  local n_clients_weights
   -- share upvalue tensors between threads
   threads.serialization('threads.sharedserialize')
   -- mutex and conditional variable for iteration synchronization between main thread and communication threads
@@ -128,13 +132,14 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
   end
 
   -- define server thread
-  local server_thread = function(server_sync_lock_id, server_sync_cond_id, server_lock_id) 
+  local server_thread = function(server_sync_lock_id, server_sync_cond_id, server_lock_id, client_lock_id) 
     local ipc = require 'libipc'
     local threads = require 'threads'
     local posix = require 'posix'
     local server_sync_lock = threads.Mutex(server_sync_lock_id)
     local server_sync_cond = threads.Condition(server_sync_cond_id)
     local server_lock = threads.Mutex(server_lock_id)
+    local client_lock = threads.Mutex(client_lock_id)
     thread_print = function(str)
       if debug then
         local colors = require 'ansicolors'
@@ -286,6 +291,24 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
         v.elem_sent = 0
       end
       thread_print("tensors sent to all clients!")
+      if early_average then
+        -- do the average in server thread!
+        -- wait for client done
+        client_lock:lock()
+        client_lock:unlock()
+        for key, tensor in pairs(self_parameters) do
+          if n_clients_weights > 0 then
+            -- print("average: ", torch.sum(t_recv[key][1]))
+            for j = 2,n_clients_weights do
+              t_recv[key][1]:add(clients_weights[j], t_recv[key][j])
+            end
+            torch.add(tensor, t_recv[key][1], self_weight, tensor)
+          else
+            -- keep_model must be false
+            tensor:mul(self_weight)
+          end
+        end
+      end
       -- barrier
       server_sync_lock:lock()
       server_sync_progress[1] = server_sync_progress[1] + 1
@@ -415,6 +438,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
         table.insert(clients, make_client_thread(nodes[i]))
       end
     end
+    n_clients_weights = #clients_weights
     
     local prev_type = torch.getdefaulttensortype()
     -- create temporary tensors for receiving
@@ -448,7 +472,7 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
     server_lock:lock()
     -- client is using the model parameter, hold the lock
     client_lock:lock()
-    pool:addjob(server_thread, function() end, server_sync_lock_id, server_sync_cond_id, server_lock_id)
+    pool:addjob(server_thread, function() end, server_sync_lock_id, server_sync_cond_id, server_lock_id, client_lock_id)
     for i = 1,#clients do
       pool:addjob(clients[i], function() end, i, client_sync_lock_id, client_sync_cond_id, client_lock_id)
     end
@@ -557,7 +581,9 @@ local function DecentralizedSGD(nodes, node_weights, node_id, model_parameters, 
   -- if keep_model is set to true, we don't put results to self_weight, as the server thread
   -- may be still using them (this only works when there are at least 1 client!)
   local function AverageParameters(keep_model)
-    local n_clients_weights = #clients_weights
+    if early_average then
+      error("AverageParameters should not be called when early_average is set to true")
+    end
     local ret = { }
     -- we have sent tensors to all peers and got all tensors from peers, now do an average
     for key, tensor in pairs(self_parameters) do
